@@ -1,4 +1,3 @@
-
 # Agent Hub - AI Agent Management Platform
 
 ## Overview
@@ -210,3 +209,11 @@ The project follows semantic versioning (SemVer) for release management.
 - **Page Headers**: Streamlined page title components to take minimal vertical space
 - **Layout Efficiency**: Improved overall layout density to show more content without scrolling
 - **Component Spacing**: Adjusted spacing between components for a more cohesive, space-efficient design
+
+## Documentation
+
+For detailed documentation about specific features, please refer to:
+
+- [Activity Flow](docs/activity-flow.md): Comprehensive guide about the activity creation and processing flow
+- [API Reference](docs/api-reference.md): API endpoints and usage
+- [Component Guide](docs/component-guide.md): UI components and their usage

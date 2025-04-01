@@ -36,7 +36,7 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [attachments, setAttachments] = useState<FileInfo[]>([]);
-  const { addActivity } = useActivity();
+  const { addActivity, updateActivity } = useActivity();
   const { user } = useAuth();
 
   const form = useForm<z.infer<typeof commandSchema>>({
@@ -110,9 +110,7 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
       
       // For debugging purposes, show what URLs we're trying to use
       console.log("🔍 Environment configuration:", {
-        commandWebhook: config.n8nWebhooks.command,
-        routingWebhook: config.n8nWebhooks.routing,
-        activityWebhook: config.n8nWebhooks.activity,
+        commandWebhook: config.n8nWebhook,
         useMockMode: config.useMockMode
       });
       
@@ -124,17 +122,12 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
         setTimeout(async () => {
           try {
             console.log("🤖 Simulating agent response (mock mode)");
-            await addActivity({
-              type: "message",
-              agent: agentName,
-              agentId: values.agentId,
-              content: `Processed your request: "${values.command.substring(0, 30)}${values.command.length > 30 ? '...' : ''}"${
-                hasAttachments ? ` with ${attachmentSummary}` : ''
-              }`,
+            await updateActivity(activityId, {
               status: "completed",
+              detailedContent: `Simulated response for: "${values.command}"`,
             });
           } catch (error) {
-            console.error("Error adding response activity:", error);
+            console.error("Error updating mock response:", error);
           }
         }, 2000);
       }
@@ -193,11 +186,9 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
 
   const sendToN8N = async (activityId: string, data: any) => {
     try {
-      const N8N_WEBHOOK_URL = config.n8nWebhooks.command;
+      console.log("🔄 Preparing to send to n8n webhook:", config.n8nWebhook);
       
-      console.log("🔄 Preparing to send to n8n webhook:", N8N_WEBHOOK_URL);
-      
-      if (N8N_WEBHOOK_URL && N8N_WEBHOOK_URL.startsWith('http')) {
+      if (config.n8nWebhook && config.n8nWebhook.startsWith('http')) {
         console.log("📤 Sending data to n8n:", {
           activityId,
           agent: data.agent,
@@ -207,7 +198,7 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
           hasAttachments: !!data.attachments
         });
         
-        const response = await fetch(N8N_WEBHOOK_URL, {
+        const response = await fetch(config.n8nWebhook, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -215,7 +206,8 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
           body: JSON.stringify({
             activityId,
             ...data,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            source: "agent_chat"
           }),
         });
         
@@ -226,19 +218,38 @@ export const AgentCommandForm = ({ agents }: AgentCommandFormProps) => {
           toast.error("Failed to connect to agent backend", {
             description: "Check console for details"
           });
+          
+          // Update activity status to error
+          await updateActivity(activityId, {
+            status: "error",
+            detailedContent: "Failed to process your request. Please try again."
+          });
         } else {
           console.log("✅ Successfully sent command to n8n!");
           const responseData = await response.json().catch(() => null);
           if (responseData) {
             console.log("📥 n8n response:", responseData);
+            // n8n will handle the status update, no need to update here
           }
         }
       } else {
-        console.log("⚠️ N8N webhook URL not configured or invalid:", N8N_WEBHOOK_URL);
-        console.log("💡 To connect to n8n, add the webhook URL to your .env file");
+        console.log("⚠️ N8N webhook URL not configured or invalid:", config.n8nWebhook);
+        
+        // Mock mode - simulate response
+        setTimeout(async () => {
+          try {
+            await updateActivity(activityId, {
+              status: "completed",
+              detailedContent: `Simulated response for: "${data.command}"`,
+            });
+          } catch (error) {
+            console.error("Error updating mock response:", error);
+          }
+        }, 2000);
       }
     } catch (error) {
       console.error("🔴 Error sending to N8N:", error);
+      toast.error("Failed to send command");
     }
   };
 

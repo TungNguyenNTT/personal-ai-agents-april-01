@@ -1,4 +1,5 @@
-import React, { createContext, useState, useContext, ReactNode, useEffect } from "react";
+import { createContext, useState, useContext, useEffect } from 'react';
+import type { FC, ReactNode } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Json } from "@/integrations/supabase/types";
@@ -30,6 +31,7 @@ export interface Activity {
   content: string;
   detailedContent?: string;
   timestamp: Date;
+  lastUpdateTime?: Date;
   status?: ActivityStatus;
   priority?: ActivityPriority;
   dismissed?: boolean;
@@ -72,6 +74,7 @@ const convertSupabaseActivity = (item: any): Activity => {
     content: item.content,
     detailedContent: item.detailed_content,
     timestamp: new Date(item.timestamp),
+    lastUpdateTime: item.updated_at ? new Date(item.updated_at) : undefined,
     status: item.status as ActivityStatus | undefined,
     priority: item.priority as ActivityPriority | undefined,
     dismissed: item.dismissed,
@@ -81,6 +84,13 @@ const convertSupabaseActivity = (item: any): Activity => {
   };
 };
 
+const isValidTransition = (oldStatus: ActivityStatus | undefined, newStatus: ActivityStatus): boolean => {
+  if (oldStatus === 'completed') {
+    return false; // Never update a completed activity
+  }
+  return true;
+};
+
 export const ActivityProvider: React.FC<ActivityProviderProps> = ({ children }) => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const { user } = useAuth();
@@ -88,8 +98,129 @@ export const ActivityProvider: React.FC<ActivityProviderProps> = ({ children }) 
   useEffect(() => {
     if (user) {
       fetchActivities();
-    } else {
-      setActivities([]);
+      
+      const sessionId = crypto.randomUUID();
+      console.log("🔌 Setting up realtime subscription for user:", {
+        userId: user.id,
+        sessionId,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Set up realtime subscription with specific events and unique channel name
+      const channel = supabase
+        .channel(`activities-channel-${sessionId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'activities',
+            filter: `user_id=eq.${user.id}`  // Only filter by user_id
+          },
+          (payload: any) => {
+            if (!payload.new) return;
+
+            console.log("🔄 UPDATE event received:", {
+              id: payload.new.id,
+              oldStatus: payload.old?.status,
+              newStatus: payload.new.status,
+              updatedAt: payload.new.updated_at,
+              detailedContent: payload.new.detailed_content?.substring(0, 50) // Log first 50 chars of content
+            });
+            
+            try {
+              const updatedActivity = convertSupabaseActivity(payload.new);
+              setActivities(prev => {
+                const currentActivity = prev.find(a => a.id === updatedActivity.id);
+                if (!currentActivity) {
+                  console.log("⚠️ Activity not found in state, adding:", updatedActivity.id);
+                  return [...prev, updatedActivity];
+                }
+
+                // Check if this update is older than our current state
+                const currentUpdateTime = currentActivity.lastUpdateTime?.getTime() || 0;
+                const newUpdateTime = updatedActivity.lastUpdateTime?.getTime() || 0;
+                
+                if (newUpdateTime < currentUpdateTime) {
+                  console.log("⏰ Skipping older update:", {
+                    id: updatedActivity.id,
+                    currentTime: currentActivity.lastUpdateTime?.toISOString(),
+                    updateTime: updatedActivity.lastUpdateTime?.toISOString()
+                  });
+                  return prev;
+                }
+
+                console.log("✨ Applying update:", {
+                  id: updatedActivity.id,
+                  oldStatus: currentActivity.status,
+                  newStatus: updatedActivity.status,
+                  updatedAt: payload.new.updated_at
+                });
+
+                return prev.map(activity => 
+                  activity.id === updatedActivity.id ? updatedActivity : activity
+                );
+              });
+            } catch (error) {
+              console.error("❌ Error processing UPDATE:", {
+                error,
+                payload: payload.new
+              });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'activities',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload: any) => {
+            console.log("➕ INSERT event received:", {
+              id: payload.new?.id,
+              type: payload.new?.type,
+              status: payload.new?.status
+            });
+            
+            if (payload.new) {
+              try {
+                const newActivity = convertSupabaseActivity(payload.new);
+                setActivities(prev => {
+                  // Check if activity already exists
+                  const exists = prev.some(activity => activity.id === newActivity.id);
+                  if (exists) {
+                    console.log("🔄 Activity already exists, skipping:", newActivity.id);
+                    return prev;
+                  }
+                  return [newActivity, ...prev];
+                });
+              } catch (error) {
+                console.error("❌ Error processing INSERT:", error);
+              }
+            }
+          }
+        );
+
+      // Subscribe with basic error handling
+      channel
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log("✅ Realtime subscription active");
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error("❌ Channel error:", err);
+            setTimeout(() => channel.subscribe(), 1000);
+          } else if (status === 'TIMED_OUT') {
+            console.error("⏰ Channel timed out");
+            setTimeout(() => channel.subscribe(), 1000);
+          }
+        });
+
+      return () => {
+        console.log("🔌 Cleaning up realtime subscription");
+        channel.unsubscribe();
+      };
     }
   }, [user]);
 
@@ -170,8 +301,6 @@ export const ActivityProvider: React.FC<ActivityProviderProps> = ({ children }) 
 
       console.log("✅ Activity saved to Supabase:", newActivity.id);
       
-      await sendToN8N(newActivity);
-      
       return id;
     } catch (error) {
       console.error("Error:", error);
@@ -181,7 +310,7 @@ export const ActivityProvider: React.FC<ActivityProviderProps> = ({ children }) 
 
   const sendToN8N = async (activity: Activity) => {
     try {
-      const N8N_WEBHOOK_URL = config.n8nWebhooks.activity;
+      const N8N_WEBHOOK_URL = config.n8nWebhook;
       
       console.log("🔄 Preparing to send activity to N8N webhook:", N8N_WEBHOOK_URL);
       

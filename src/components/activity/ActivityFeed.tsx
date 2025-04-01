@@ -217,10 +217,21 @@ export const ActivityFeed = ({
   const filteredActivities = activities
     .filter(activity => !activity.dismissed)
     .filter(activity => {
+      if (agentFilter === "all" && typeFilter === "all") return true;
       const matchesAgent = agentFilter === "all" || activity.agentId === agentFilter;
       const matchesType = typeFilter === "all" || activity.type === typeFilter;
       return matchesAgent && matchesType;
+    })
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+  useEffect(() => {
+    console.log("🔍 Filtered activities:", {
+      total: activities.length,
+      filtered: filteredActivities.length,
+      agentFilter,
+      typeFilter
     });
+  }, [activities, filteredActivities.length, agentFilter, typeFilter]);
 
   const unreadCount = filteredActivities.filter(a => !a.read).length;
 
@@ -285,8 +296,8 @@ export const ActivityFeed = ({
         </Badge>
       </div>
       
-      <ScrollArea ref={scrollAreaRef} className="h-[500px] pr-2">
-        <div className="space-y-2">
+      <ScrollArea className="h-[calc(100vh-12rem)]">
+        <div className="space-y-4 p-4">
           {filteredActivities.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <AlertCircle className="mx-auto h-8 w-8 mb-2" />
@@ -294,16 +305,17 @@ export const ActivityFeed = ({
               <p className="text-sm">Try changing your filter settings</p>
             </div>
           ) : (
-            <>
-              {filteredActivities.map((activity) => (
-                <ContextMenu key={activity.id}>
+            filteredActivities.map((activity) => (
+              <div key={activity.id} className="relative">
+                <ContextMenu>
                   <ContextMenuTrigger>
                     <div
                       className={cn(
                         "flex items-start gap-2 rounded-md p-2 transition-colors border",
                         activity.read 
                           ? "bg-background border-border/50 opacity-75" 
-                          : "bg-muted/30 border-border"
+                          : "bg-muted/30 border-border",
+                        activity.status === "completed" && "border-green-500/50"
                       )}
                     >
                       <div
@@ -388,9 +400,8 @@ export const ActivityFeed = ({
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
-              ))}
-              <div ref={activitiesEndRef} />
-            </>
+              </div>
+            ))
           )}
         </div>
       </ScrollArea>

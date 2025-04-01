@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,13 +55,10 @@ export const CommandBar = () => {
         description: `Processing request: "${messageContent}"`,
       });
       
-      // N8N URL for command processing
-      const N8N_WEBHOOK_URL = config.n8nWebhooks.command;
-      
-      // Only proceed with real backend processing if the URL is valid
-      if (N8N_WEBHOOK_URL && N8N_WEBHOOK_URL.startsWith('http')) {
+      // Send to n8n webhook
+      if (config.n8nWebhook && config.n8nWebhook.startsWith('http')) {
         try {
-          const response = await fetch(N8N_WEBHOOK_URL, {
+          const response = await fetch(config.n8nWebhook, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -76,13 +72,13 @@ export const CommandBar = () => {
                 id: user.id,
                 email: user.email
               } : undefined,
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
+              source: "command_bar"
             }),
           });
           
           if (!response.ok) {
             console.error("Failed to process command:", await response.text());
-            // Update activity status to error if backend processing failed
             await updateActivity(activityId, {
               status: "error",
               detailedContent: "Failed to process your request. Please try again."
@@ -95,23 +91,18 @@ export const CommandBar = () => {
             });
           } else {
             // Backend successfully received the command
-            // The response might be handled through Supabase realtime or we can parse it here
             const result = await response.json();
             
-            if (result && result.routedAgent) {
-              // Update the activity to show it's been routed
-              await updateActivity(activityId, {
-                status: "in-progress",
-                detailedContent: `Your request has been routed to ${result.routedAgent.name}`
-              });
-              
-              // The backend should handle adding the agent's response as a new activity
-              console.log("Command routed to agent:", result.routedAgent);
-            }
+            // Update activity with initial status
+            await updateActivity(activityId, {
+              status: "in-progress",
+              detailedContent: result.message || "Request is being processed"
+            });
+
+            console.log("Command sent successfully, waiting for agent response...");
           }
         } catch (error) {
           console.error("Error processing with backend:", error);
-          // Update activity status to error if processing failed
           await updateActivity(activityId, {
             status: "error",
             detailedContent: "An error occurred while processing your request."
@@ -124,55 +115,15 @@ export const CommandBar = () => {
           });
         }
       } else {
-        console.log("No valid N8N webhook URL configured, using fallback mode");
-        
-        // Fallback to frontend-only mode for development/testing
-        // In a real implementation this would be removed once backend is fully set up
+        // Mock mode - simulate response after delay
         setTimeout(async () => {
           try {
-            // Determine which agent to route to based on command text
-            let agentId = "chat-gpt";
-            let agentName = "Chat GPT";
-            
-            if (command.toLowerCase().includes("calendar") || command.toLowerCase().includes("schedule")) {
-              agentId = "calendar";
-              agentName = "Calendar";
-            } else if (command.toLowerCase().includes("email") || command.toLowerCase().includes("mail")) {
-              agentId = "email";
-              agentName = "Email";
-            } else if (command.toLowerCase().includes("home") || command.toLowerCase().includes("light")) {
-              agentId = "home-assistant";
-              agentName = "Home Assistant";
-            }
-            
-            // Update original activity to show routing
             await updateActivity(activityId, {
               status: "completed",
-              detailedContent: `Your request was routed to ${agentName}`
-            });
-            
-            // Add simulated agent response
-            await addActivity({
-              type: "message",
-              agent: agentName,
-              agentId: agentId,
-              content: `Response to your request: "${command.substring(0, 30)}${command.length > 30 ? '...' : ''}"${
-                hasAttachments ? ` with ${attachmentSummary}` : ''
-              }`,
-              status: "completed",
-            });
-            
-            toast({
-              title: "Response received",
-              description: `${agentName} has responded to your request`
+              detailedContent: `Simulated response for: "${command}"`,
             });
           } catch (error) {
-            console.error("Error in fallback mode:", error);
-            toast({
-              title: "Error",
-              description: "Failed to process response",
-              variant: "destructive"
-            });
+            console.error("Error updating mock response:", error);
           }
         }, 2000);
       }

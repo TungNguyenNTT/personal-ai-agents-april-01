@@ -1,0 +1,95 @@
+{
+  "name": "Command Processing Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "webhook/command",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get input data\nconst input = $input.first();\n\n// Extract command details\nconst {\n  activityId,\n  command,\n  hasAttachments,\n  attachments,\n  user,\n  timestamp\n} = input.json;\n\n// Simple routing logic based on command content\nlet routedAgent = {\n  id: 'chat-gpt',\n  name: 'Chat GPT'\n};\n\nif (command.toLowerCase().includes('calendar') || command.toLowerCase().includes('schedule')) {\n  routedAgent = {\n    id: 'calendar',\n    name: 'Calendar'\n  };\n} else if (command.toLowerCase().includes('email') || command.toLowerCase().includes('mail')) {\n  routedAgent = {\n    id: 'email',\n    name: 'Email'\n  };\n} else if (command.toLowerCase().includes('home') || command.toLowerCase().includes('light')) {\n  routedAgent = {\n    id: 'home-assistant',\n    name: 'Home Assistant'\n  };\n}\n\n// Return routing result\nreturn {\n  json: {\n    activityId,\n    routedAgent,\n    message: `Your request has been routed to ${routedAgent.name}`,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "name": "Route Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "activities",
+        "where": {
+          "id": "={{$json.activityId}}"
+        },
+        "set": {
+          "agent": "={{$json.routedAgent.name}}",
+          "agent_id": "={{$json.routedAgent.id}}",
+          "status": "completed",
+          "detailed_content": "={{$json.message}}",
+          "updated_at": "={{$json.timestamp}}"
+        }
+      },
+      "name": "Update Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Update Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Supabase": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+} 
